@@ -30,6 +30,155 @@ dotnet add YourApp.csproj reference ./Cloudflare.Kit/src/Cloudflare.Kit/Cloudfla
 
 仓库包含 SDK 源码、单元测试和可编译示例；构建要求 .NET 8 或更新的稳定版 SDK。
 
+## 创建 Token 与其他凭据
+
+先确定需要哪种凭据；资源 ID 是定位标识，不是密钥。
+
+| 凭据 | SDK 中的用途 | 配置位置 |
+|---|---|---|
+| Cloudflare API Token（Bearer Token） | DNS、KV、D1、桶管理、Tunnel 管理、Worker 部署等管理接口 | `Cloudflare.ApiToken` |
+| R2 Access Key ID + Secret Access Key | S3 对象上传、下载、列举和预签名 URL | `Cloudflare.R2.AccessKeyId` / `SecretAccessKey` |
+| Tunnel Token | 让源站的 `cloudflared` 连接到指定隧道 | 交给 `cloudflared`，不填入 `Cloudflare.ApiToken` |
+| Turnstile Sitekey + Secret Key | 网页挑战与后端 Siteverify 验证；不是 Widget 管理凭据 | 由业务网站配置，不用于本 SDK 的 API 鉴权 |
+
+<details>
+<summary>1. 创建管理 API Token：账户 Token 与用户 Token</summary>
+
+账户 Token 适合服务集成，用户 Token 代表某个用户。创建入口不同：
+
+- **账户 Token**：进入 Cloudflare 控制台，选择账户 → **管理账户 → 账户 API 令牌**。
+- **用户 Token**：右上角用户菜单 → **我的配置文件 → API 令牌**。
+
+创建过程：
+
+1. 选择 **创建令牌**，使用自定义策略；名称注明应用和用途，例如 `my-app-readonly`。
+2. 仅添加所需权限，读取选择 `Read`；需要写入时才选择对应的 `Edit` / `Write`。
+3. 限定资源范围：账户功能选择目标账户，DNS 选择目标域名，避免直接使用全部权限模板。
+4. 设置有效期。短期测试可以设为 7 天；有固定出口 IP 时可额外设置 IP 范围。
+5. 审核摘要，确认权限和范围后创建。
+6. 立即保存一次性显示的 Token，填入 `Cloudflare.ApiToken`。不要把 Token 名称或 Token ID 当成 Token 密钥。
+
+账户 Token 需要创建者具备相应的令牌供应权限或超管角色，且只能授予自身拥有的权限子集。账户 Token 不保证覆盖全部产品或用户级接口；访问 `Api.User` 等用户接口前应确认 Token 类型适用，不能通过无关的额外权限解决所有 403。
+
+参考：[创建 API Token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)、[账户 Token 与产品兼容性](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/)。新旧控制台的中英文名称可能略有差异。
+
+</details>
+
+<details>
+<summary>2. 按资源选择权限：只读测试与写入操作</summary>
+
+按实际使用勾选下表中的权限，不需要一次添加全部权限。控制台可能把 API 中的 `Write` 显示为 `Edit`，以具体接口文档列出的权限为准。
+
+| 需要的功能 | 只读权限示例 | 写入时需要的权限示例 / 范围 |
+|---|---|---|
+| 查找 Zone、读取 DNS | `Zone Read` + `DNS Read` | 修改 DNS 使用 `DNS Write`；限制到指定域名 |
+| KV 命名空间、键值读取 | `Workers KV Storage Read` | 修改命名空间或键值使用 `Workers KV Storage Write` |
+| D1 数据库及只读 SQL | `D1 Read` | 创建数据库或修改数据使用 `D1 Write` |
+| R2 桶与配置读取 | `Workers R2 Storage Read` | 修改桶与配置使用 `Workers R2 Storage Write` |
+| Tunnel 列表、配置与连接读取 | `Cloudflare Tunnel Read` 或接口接受的新版连接器读取权限 | 创建、配置、删除或取得运行 Token 使用接口接受的 `Cloudflare Tunnel Write` / 连接器写入权限 |
+| Turnstile Widget 管理 | `Turnstile Sites Read` | 修改 Widget 使用 `Turnstile Sites Write`；Siteverify 使用业务 Secret Key |
+| Worker 路由 | `Workers Routes Read` | 修改路由使用 `Workers Routes Write`，范围为目标 Zone |
+| Worker 脚本上传 | 不通过只读权限执行上传 | 使用目标 Worker 对应的脚本编辑权限；旧权限名称为 `Workers Scripts Write` |
+
+R2 **对象操作**的权限与桶管理不同，见下一节。WAF、审计日志、成员、订阅等额外接口同样需要各自的权限；SDK 的 `Api` 入口不会绕过 Cloudflare 的权限和套餐限制。
+
+只需要运行本仓库的只读检查时，不要添加 DNS 写入、Worker 部署、Tunnel Token 获取等权限。该检查不会调用创建、删除或部署接口。
+
+</details>
+
+<details>
+<summary>3. 创建 R2 S3 凭据：Access Key ID 与 Secret Access Key</summary>
+
+1. 在控制台进入 **存储和数据库 → R2 对象存储 → 概览**，确认账户已开通 R2。
+2. 在账户详情区域找到 **API Tokens / 管理 API 令牌**，选择创建账户 Token 或用户 Token。
+3. 按用途选择：只读取对象用 **Object Read only**；上传、删除对象用 **Object Read & Write**。这两种对象权限可进一步限制到指定桶。
+4. 如果还需要枚举桶、读取或修改桶配置，选择所需的 **Admin Read only** 或 **Admin Read & Write**，不要把对象级权限当作桶管理权限。
+5. 设置范围与有效期并创建，保存显示的 **Access Key ID** 和 **Secret Access Key**。Secret 只显示一次。
+6. 将这两个值填入 `Cloudflare.R2`。部分账户 Token 创建结果会同时显示 Bearer Token 与 S3 凭据，各自填入对应字段。
+
+标准 S3 端点为 `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`。本 SDK 的上游配置 `EndpointUrl` 接受**模板**：`https://{0}.r2.cloudflarestorage.com`；`{0}` 保持原样，由 SDK 填入账户 ID。通常省略该配置即可。jurisdiction 桶需要对应区域端点；不要将公共下载域名或 `r2.dev` 地址作为 S3 API 端点。
+
+只有桶级对象权限的 S3 凭据可能可以列举指定桶中的对象，却不能列举账户中的桶，这是权限范围差异。只配置对象级凭据时，不要用完整桶管理检查来判定它是否有效。
+
+参考：[R2 凭据创建、权限及区域端点](https://developers.cloudflare.com/r2/api/tokens/)。
+
+</details>
+
+<details>
+<summary>4. 获取 Tunnel 运行 Token；与管理 API Token 区分</summary>
+
+远程管理的隧道可以在控制台 **联网 / Networking → Tunnels** 中创建。选中隧道，进入 **Add a replica / 添加副本**，安装命令中包含该隧道的运行 Token。也可以用具有相应写入权限的管理 API Token 调用：
+
+```csharp
+var tunnelToken = await cloudflare.Tunnels.GetTokenAsync(accountId, tunnelId);
+// 交给 cloudflared 使用，不输出到日志。
+```
+
+读取隧道列表所需的只读权限，**不足以取得运行 Token**。运行 Token 允许持有者启动该隧道的 connector，因此不要把它当作一般的状态查询结果。
+
+在源站安装官方 `cloudflared` 后可用 `TUNNEL_TOKEN` 环境变量提供运行 Token，再执行 `cloudflared tunnel run`。SDK 本身不启动 connector；配置 Ingress 与 DNS 后仍需要源站 connector 在线。
+
+本地管理隧道的 `cert.pem` 和 `<TUNNEL-UUID>.json` 是另一套 cloudflared 凭据，本 SDK 的远程管理流程不需要把它们加载进来。不要为了使用 SDK 而复制整个账户证书。
+
+参考：[Tunnel Token 获取与轮换](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/)、[运行参数与环境变量](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/)。
+
+</details>
+
+<details>
+<summary>5. 查找 Account ID、Zone ID 和产品资源 ID</summary>
+
+| 参数 | 获取位置 / SDK 查询方式 |
+|---|---|
+| `AccountId` | 控制台的账户详情；也可从账户页面 URL 中的账户标识确认 |
+| `zoneId` | 目标域名的概览页；或 `cloudflare.Api.Zones.ListZonesAsync()` |
+| `namespaceId` | Workers KV 命名空间详情；或 `cloudflare.Kv.ListAsync()` |
+| `databaseId` | D1 数据库 UUID；或 `cloudflare.D1.ListAsync()` 返回的 `Uuid` |
+| `bucket` | R2 桶名称；对象操作传桶名，不传 URL |
+| `tunnelId` | Tunnel 详情中的 UUID；或 `cloudflare.Tunnels.ListAsync(accountId)` |
+| `scriptName` | Workers 应用的脚本名称；不是 `workers.dev` 完整 URL |
+
+Account ID 与 Zone ID 是不同标识，即使格式相似也不能互换。D1 的数据库名称、Workers 配置中的 binding 名称也不能代替数据库 UUID 或 KV namespace ID。
+
+</details>
+
+<details>
+<summary>6. 保存到本地配置、验证与常见错误</summary>
+
+复制 `appsettings.local.example.json` 为 `appsettings.local.json`，再在实际配置中填写凭据。以下只有占位符：
+
+```json
+{
+  "Cloudflare": {
+    "ApiToken": "YOUR_MANAGEMENT_API_TOKEN",
+    "AccountId": "YOUR_ACCOUNT_ID",
+    "R2": {
+      "AccessKeyId": "YOUR_R2_ACCESS_KEY_ID",
+      "SecretAccessKey": "YOUR_R2_SECRET_ACCESS_KEY"
+    }
+  }
+}
+```
+
+不调用 R2 对象 API 时，可以省略 `R2` 配置。普通业务应用也可以从环境变量、.NET User Secrets 或部署平台的密钥服务读入值后传给客户端；SDK 不会自动替应用加载某个 JSON 文件。
+
+本仓库提供读取上述文件的独立检查程序：
+
+```powershell
+dotnet run --project samples/Cloudflare.Kit.Sample -c Release -- --live-readonly --config appsettings.local.json
+```
+
+此文件已被 Git 忽略，仍应限制本机文件访问权限；不要把真实密钥写进 README、示例模板、截图或公共日志。遗失一次性显示的密钥时应重新签发，而不是尝试从控制台找回明文。替换应用配置并确认工作后，再撤销不再需要的旧凭据。
+
+| 现象 | 优先检查 |
+|---|---|
+| 401 / 认证失败 | 是否填入实际 Token 密钥、是否已过期或撤销、有没有混用 Tunnel Token 或 R2 Secret |
+| 403 / 权限不足 | Token 类型、接口权限、账户/域名/桶范围、IP 限制与产品套餐；不要直接添加所有权限 |
+| R2 `SignatureDoesNotMatch` | Access Key 与 Secret 是否配对，账户 ID、区域端点与系统时钟是否正确 |
+| `EndpointUrl` 配置校验失败 | 此配置必须保留 `{0}` 占位符，或直接省略使用默认值 |
+| Token 验证成功但某个接口失败 | 验证只表明 Token 状态有效，不证明它具有该接口的资源权限 |
+
+</details>
+
 ## 创建客户端
 
 控制台、WinForms、WPF、后台服务和 Web 项目都可以使用。直接 `new` 和 DI 两种方式提供相同的资源入口；以下示例默认折叠。
