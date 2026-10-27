@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Cloudflare.Kit</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Cloudflare clients for DNS, KV, D1, R2, Tunnel management and Worker uploads.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/bighamx/Cloudflare.Kit</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/bighamx/Cloudflare.Kit</PackageProjectUrl>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Cloudflare.NET.Api" Version="3.7.0" />
+    <PackageReference Include="Cloudflare.NET.R2" Version="2.5.0" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

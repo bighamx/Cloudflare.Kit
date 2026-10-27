@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+.vs/
+*.user
+*.nupkg
+*.snupkg
+artifacts/
+appsettings.local.json
+.env
+.env.*
+!.env.example
