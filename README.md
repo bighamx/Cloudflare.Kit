@@ -30,7 +30,63 @@ dotnet add YourApp.csproj reference ./Cloudflare.Kit/src/Cloudflare.Kit/Cloudfla
 
 仓库包含 SDK 源码、单元测试和可编译示例；构建要求 .NET 8 或更新的稳定版 SDK。
 
-## 注册与使用
+## 创建客户端
+
+控制台、WinForms、WPF、后台服务和 Web 项目都可以使用。直接 `new` 和 DI 两种方式提供相同的资源入口；以下示例默认折叠。
+
+<details>
+<summary>直接 new：不需要调用方使用 DI</summary>
+
+```csharp
+using Cloudflare.Kit;
+using Cloudflare.NET.Core;
+
+using var cloudflare = new CloudflareKitClient(new CloudflareApiOptions
+{
+    ApiToken = apiToken,
+    AccountId = accountId,
+    DefaultTimeout = TimeSpan.FromSeconds(30)
+});
+
+await foreach (var tunnel in cloudflare.Tunnels.ListAllAsync(accountId))
+{
+    Console.WriteLine($"{tunnel.Name}: {tunnel.Status}");
+}
+
+var databases = await cloudflare.D1.ListAsync();
+Console.WriteLine(databases.Items.Count);
+```
+
+复用客户端，在应用或服务结束时释放。`using` 会释放该实例内部拥有的资源；不要每个请求反复创建。
+
+</details>
+
+<details>
+<summary>直接 new：同时配置 R2 对象存储</summary>
+
+```csharp
+using Cloudflare.Kit;
+using Cloudflare.NET.Core;
+using Cloudflare.NET.R2.Configuration;
+
+using var cloudflare = new CloudflareKitClient(new CloudflareApiOptions
+{
+    ApiToken = apiToken,
+    AccountId = accountId
+}, new R2Settings
+{
+    AccessKeyId = accessKeyId,
+    SecretAccessKey = secretAccessKey
+});
+
+var objects = await cloudflare.R2.ListObjectsAsync(bucket, prefix: null);
+Console.WriteLine(objects.Data.Count);
+```
+
+</details>
+
+<details>
+<summary>DI：注册、注入和配置</summary>
 
 ```csharp
 using Cloudflare.Kit;
@@ -65,7 +121,284 @@ var rows = await cloudflare.D1.QueryAsync(databaseId,
 
 R2 对象 API 使用 S3 Access Key ID / Secret Access Key；这与 Cloudflare 管理 API 的 Bearer Token 是两种凭据，不可互换。不要将这些凭据放进浏览器端应用或提交源码。
 
-## Tunnel 示例
+通过 DI 注入时生命周期由容器管理，不要在业务方法中用 `using` 提前释放注入的客户端。
+
+</details>
+
+## 各类资源使用示例
+
+以下代码沿用上面的 `cloudflare`，适用于直接 `new` 和 DI。资源标识与变量替换为自己的值，凭据需要相应权限。写操作会修改指定资源；示例程序不会自动执行这些方法。
+
+<details>
+<summary>DNS：枚举、查询与创建 CNAME</summary>
+
+```csharp
+await foreach (var record in cloudflare.Dns.ListAllDnsRecordsAsync(zoneId))
+{
+    Console.WriteLine($"{record.Name}: {record.Content}");
+}
+
+var existing = await cloudflare.Dns.FindDnsRecordByNameAsync(zoneId, "app.example.com");
+if (existing is null)
+{
+    await cloudflare.Dns.CreateCnameRecordAsync(
+        zoneId, "app.example.com", "origin.example.com", proxied: true);
+}
+```
+
+</details>
+
+<details>
+<summary>Workers KV：命名空间、读写、metadata、TTL 与删除</summary>
+
+```csharp
+using System.Text.Json;
+using Cloudflare.NET.Accounts.Kv.Models;
+
+await foreach (var item in cloudflare.Kv.ListAllAsync())
+{
+    Console.WriteLine(JsonSerializer.Serialize(item));
+}
+
+var metadata = JsonSerializer.SerializeToElement(new { purpose = "example" });
+var options = new KvWriteOptions(ExpirationTtl: 3600, Metadata: metadata);
+await cloudflare.Kv.WriteValueAsync(namespaceId, "examples/theme", "dark", options);
+var value = await cloudflare.Kv.GetValueAsync(namespaceId, "examples/theme");
+Console.WriteLine(value);
+
+await foreach (var key in cloudflare.Kv.ListAllKeysAsync(namespaceId, prefix: "examples/"))
+{
+    Console.WriteLine(JsonSerializer.Serialize(key));
+}
+
+await cloudflare.Kv.DeleteValueAsync(namespaceId, "examples/theme");
+```
+
+</details>
+
+<details>
+<summary>D1 SQLite：数据库、建表、参数化插入与查询</summary>
+
+```csharp
+using System.Text.Json;
+
+await foreach (var database in cloudflare.D1.ListAllAsync())
+{
+    Console.WriteLine(JsonSerializer.Serialize(database));
+}
+
+await cloudflare.D1.QueryAsync(databaseId,
+    "CREATE TABLE IF NOT EXISTS sdk_example_users (id INTEGER PRIMARY KEY, email TEXT NOT NULL)");
+await cloudflare.D1.QueryAsync(databaseId,
+    "INSERT INTO sdk_example_users (email) VALUES (?)", new object[] { email });
+var result = await cloudflare.D1.QueryAsync(databaseId,
+    "SELECT id, email FROM sdk_example_users WHERE email = ?", new object[] { email });
+Console.WriteLine(JsonSerializer.Serialize(result));
+```
+
+</details>
+
+<details>
+<summary>R2 桶管理：列桶、CORS 与生命周期</summary>
+
+```csharp
+using System.Text.Json;
+
+await foreach (var item in cloudflare.Accounts.Buckets.ListAllAsync())
+{
+    Console.WriteLine(JsonSerializer.Serialize(item));
+}
+
+var cors = await cloudflare.Accounts.Buckets.GetCorsAsync(bucket);
+var lifecycle = await cloudflare.Accounts.Buckets.GetLifecycleAsync(bucket);
+Console.WriteLine(JsonSerializer.Serialize(cors));
+Console.WriteLine(JsonSerializer.Serialize(lifecycle));
+
+// 创建新桶时按需调用，不要重复创建已有桶。
+// await cloudflare.Accounts.Buckets.CreateAsync("my-new-bucket");
+```
+
+</details>
+
+<details>
+<summary>R2 对象：上传、列举、下载与预签名 URL</summary>
+
+```csharp
+using System.Text;
+using System.Text.Json;
+using Cloudflare.NET.R2.Models;
+
+using var upload = new MemoryStream(Encoding.UTF8.GetBytes("Hello R2"));
+await cloudflare.R2.UploadAsync(bucket, "examples/hello.txt", upload);
+
+var objects = await cloudflare.R2.ListObjectsAsync(bucket, "examples/");
+Console.WriteLine(JsonSerializer.Serialize(objects));
+
+using var download = new MemoryStream();
+await cloudflare.R2.DownloadFileAsync(bucket, "examples/hello.txt", download);
+var text = Encoding.UTF8.GetString(download.ToArray());
+Console.WriteLine(text);
+
+var request = new PresignedGetRequest("examples/hello.txt", TimeSpan.FromMinutes(10));
+var signedUrl = cloudflare.R2.CreatePresignedGetUrl(bucket, request);
+// 将 signedUrl 提供给需要临时下载权限的调用方，避免写入公共日志。
+```
+
+</details>
+
+<details>
+<summary>Zones：站点查询与指定文件缓存清理</summary>
+
+```csharp
+using System.Text.Json;
+using Cloudflare.NET.Zones.Models;
+
+var zones = await cloudflare.Api.Zones.ListZonesAsync();
+var zone = await cloudflare.Api.Zones.GetZoneDetailsAsync(zoneId);
+Console.WriteLine(JsonSerializer.Serialize(zones));
+Console.WriteLine(JsonSerializer.Serialize(zone));
+
+var cacheRequest = new PurgeCacheRequest(Files: new[] { "https://app.example.com/style.css" });
+await cloudflare.Api.Zones.PurgeCacheAsync(zoneId, cacheRequest);
+```
+
+</details>
+
+<details>
+<summary>Accounts：账户列表与详情</summary>
+
+```csharp
+using System.Text.Json;
+
+await foreach (var account in cloudflare.Accounts.ListAllAccountsAsync())
+{
+    Console.WriteLine(JsonSerializer.Serialize(account));
+}
+
+var details = await cloudflare.Accounts.GetAccountAsync(accountId);
+Console.WriteLine(JsonSerializer.Serialize(details));
+```
+
+</details>
+
+<details>
+<summary>Worker 路由：查询 Zone 路由</summary>
+
+```csharp
+using System.Text.Json;
+
+var routes = await cloudflare.Api.Workers.ListRoutesAsync(zoneId);
+Console.WriteLine(JsonSerializer.Serialize(routes));
+```
+
+</details>
+
+<details>
+<summary>Turnstile：枚举 Widget</summary>
+
+```csharp
+await foreach (var widget in cloudflare.Api.Turnstile.ListAllWidgetsAsync(accountId))
+{
+    // 只展示公开的 sitekey，不输出可能包含 secret 的完整 Widget 对象。
+    Console.WriteLine(widget.Sitekey);
+}
+```
+
+</details>
+
+<details>
+<summary>API Token：账户 Token 校验与权限组</summary>
+
+```csharp
+using System.Text.Json;
+
+var verification = await cloudflare.Api.ApiTokens.VerifyAccountTokenAsync(accountId);
+Console.WriteLine(JsonSerializer.Serialize(verification));
+
+var permissions = await cloudflare.Api.ApiTokens.GetAccountPermissionGroupsAsync(accountId);
+Console.WriteLine(JsonSerializer.Serialize(permissions));
+```
+
+</details>
+
+<details>
+<summary>Audit Logs：账户审计日志</summary>
+
+```csharp
+using System.Text.Json;
+
+var logs = await cloudflare.Api.AuditLogs.GetAccountAuditLogsAsync(accountId);
+Console.WriteLine(JsonSerializer.Serialize(logs));
+```
+
+</details>
+
+<details>
+<summary>WAF Rulesets：Zone 与账户规则集</summary>
+
+```csharp
+using System.Text.Json;
+
+await foreach (var ruleset in cloudflare.Api.Zones.Rulesets.ListAllAsync(zoneId))
+{
+    Console.WriteLine(JsonSerializer.Serialize(ruleset));
+}
+
+await foreach (var ruleset in cloudflare.Accounts.Rulesets.ListAllAsync())
+{
+    Console.WriteLine(JsonSerializer.Serialize(ruleset));
+}
+```
+
+</details>
+
+<details>
+<summary>成员与角色：账户成员及角色</summary>
+
+```csharp
+using System.Text.Json;
+
+await foreach (var member in cloudflare.Api.Members.ListAllAccountMembersAsync(accountId))
+{
+    Console.WriteLine(JsonSerializer.Serialize(member));
+}
+
+await foreach (var role in cloudflare.Api.Roles.ListAllAccountRolesAsync(accountId))
+{
+    Console.WriteLine(JsonSerializer.Serialize(role));
+}
+```
+
+</details>
+
+<details>
+<summary>User：当前用户及成员关系</summary>
+
+```csharp
+using System.Text.Json;
+
+var user = await cloudflare.Api.User.GetUserAsync();
+var memberships = await cloudflare.Api.User.ListMembershipsAsync();
+Console.WriteLine(JsonSerializer.Serialize(user));
+Console.WriteLine(JsonSerializer.Serialize(memberships));
+```
+
+</details>
+
+<details>
+<summary>Subscriptions：账户订阅</summary>
+
+```csharp
+using System.Text.Json;
+
+var subscriptions = await cloudflare.Api.Subscriptions.ListAccountSubscriptionsAsync(accountId);
+Console.WriteLine(JsonSerializer.Serialize(subscriptions));
+```
+
+</details>
+
+<details>
+<summary>Tunnel：创建、Ingress、DNS 与 Token</summary>
 
 ```csharp
 using Cloudflare.Kit.Tunnels;
@@ -95,7 +428,10 @@ SDK 管理隧道资源，不会启动 cloudflared，也不实现隧道传输协�
 
 `RemoveConnectionAsync` 移除指定 connector；`RemoveAllConnectionsAsync` 移除所有 connector，包括活跃连接，并非仅清理僵尸连接。
 
-## Worker 上传
+</details>
+
+<details>
+<summary>Worker 脚本：上传并部署 ES Module</summary>
 
 ```csharp
 using System.Text;
@@ -113,7 +449,9 @@ await cloudflare.WorkerScripts.UploadAsync(accountId, "hello-worker", new Worker
 
 上传接口会部署脚本，不是只保存一个草稿。多模块的 part name 应与模块导入名称对应。`Bindings` 接受 `JsonArray`，可描述 KV、D1、R2 等绑定；`AdditionalProperties` 可传递 API 的其他元数据。替换已有 Worker 时应显式传入需要的绑定/设置，或按官方语义配置 `KeepBindings`；Kit 不会自动读取并合并旧设置。
 
-完整、可编译的五类资源示例见 `samples/Cloudflare.Kit.Sample/Examples.cs`。示例程序默认只读取 Tunnel 列表，不创建或删除资源。
+</details>
+
+可编译示例：[ResourceExamples.cs](samples/Cloudflare.Kit.Sample/ResourceExamples.cs)、[StandaloneExamples.cs](samples/Cloudflare.Kit.Sample/StandaloneExamples.cs) 和 [Examples.cs](samples/Cloudflare.Kit.Sample/Examples.cs)。示例程序默认只读取 Tunnel 列表，不会执行上述写操作。
 
 ## HTTP、错误与测试
 
@@ -132,7 +470,24 @@ dotnet pack src/Cloudflare.Kit -c Release -o artifacts
 dotnet run --project samples/Cloudflare.Kit.Sample
 ```
 
-测试使用模拟 HttpMessageHandler，覆盖分页、鉴权头、配置字段往返、multipart、业务失败、重试、取消及 DI/R2 注册，不访问真实账户。尚未验证真实 Cloudflare 账户调用。
+单元测试使用模拟 HttpMessageHandler，覆盖分页、鉴权头、配置字段往返、multipart、业务失败、重试、取消、DI/R2 注册及直接 `new` 的创建与释放；单元测试不访问真实账户。真实只读验证单独执行，方法如下。
+
+<details>
+<summary>使用本地配置进行真实账户只读验证</summary>
+
+将仓库中的 `appsettings.local.example.json` 复制为 `appsettings.local.json`，填写账户信息与只读凭据。实际配置已列入 `.gitignore`；不要将凭据填入示例模板或提交到仓库。
+
+```powershell
+dotnet run --project samples/Cloudflare.Kit.Sample -c Release -- --live-readonly --config appsettings.local.json
+```
+
+此命令使用直接 `new` 的调用方式，检查 Tunnel、DNS、KV、D1、R2 桶、S3 对象列表及 Turnstile。有数据库时只执行 `SELECT 1`，不读取业务表；对象列表最多获取一个条目，不下载对象正文。使用单独的测试 Token 并按所需接口授予只读权限。
+
+如果配置 `R2.EndpointUrl`，上游 SDK 要求使用账户占位符，例如 `https://{0}.r2.cloudflarestorage.com`；省略时根据账户及 jurisdiction 自动构造。
+
+2026-10-27 已使用真实账户完成上述只读检查，全部通过。写入、删除和 Worker 部署目前由模拟测试验证，未对真实业务资源执行。
+
+</details>
 
 ## 参考与维护
 

@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Cloudflare.Kit.Tunnels;
 using Cloudflare.Kit.Workers;
 using Cloudflare.NET.Core;
+using Cloudflare.NET.R2.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -31,6 +32,50 @@ public sealed class ClientTests
             ApiToken = "test-token",
             AccountId = Account
         });
+    }
+
+    [Fact]
+    public void StandaloneConstructorExposesResourcesWithoutCallerDi()
+    {
+        using var client = new CloudflareKitClient(new CloudflareApiOptions
+        {
+            ApiToken = "test-token",
+            AccountId = Account
+        });
+        Assert.NotNull(client.Api);
+        Assert.NotNull(client.Dns);
+        Assert.NotNull(client.Kv);
+        Assert.NotNull(client.D1);
+        Assert.NotNull(client.Tunnels);
+        Assert.NotNull(client.WorkerScripts);
+        Assert.Throws<InvalidOperationException>(() => client.R2);
+    }
+
+    [Fact]
+    public void StandaloneConstructorSupportsR2AndIdempotentDisposal()
+    {
+        var client = new CloudflareKitClient(new CloudflareApiOptions
+        {
+            ApiToken = "test-token",
+            AccountId = Account
+        }, new R2Settings
+        {
+            AccessKeyId = "test-access-key",
+            SecretAccessKey = "test-secret"
+        });
+        Assert.NotNull(client.R2);
+        client.Dispose();
+        client.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => client.Api);
+        Assert.Throws<ObjectDisposedException>(() => client.R2);
+        Assert.Throws<ObjectDisposedException>(() => client.Tunnels);
+        Assert.Throws<ObjectDisposedException>(() => client.WorkerScripts);
+    }
+
+    [Fact]
+    public void StandaloneConstructorRejectsMissingOptions()
+    {
+        Assert.Throws<ArgumentNullException>(() => new CloudflareKitClient((CloudflareApiOptions)null!));
     }
 
     [Fact]

@@ -1,5 +1,24 @@
 using Cloudflare.Kit;
 using Microsoft.Extensions.DependencyInjection;
+using Cloudflare.NET.Core;
+using Cloudflare.NET.R2.Configuration;
+using System.Text.Json;
+
+if (args.Length == 3 && args[0] == "--live-readonly" && args[1] == "--config")
+{
+    using var json = JsonDocument.Parse(await File.ReadAllTextAsync(args[2]));
+    var settings = json.RootElement.GetProperty("Cloudflare");
+    var options = settings.Deserialize<CloudflareApiOptions>()!;
+    R2Settings? r2Settings = null;
+    if (settings.TryGetProperty("R2", out var r2) && r2.TryGetProperty("AccessKeyId", out var accessKey)
+        && !string.IsNullOrWhiteSpace(accessKey.GetString()))
+    {
+        r2Settings = r2.Deserialize<R2Settings>();
+    }
+    using var client = new CloudflareKitClient(options, r2Settings);
+    Environment.ExitCode = await LiveReadOnlyChecks.RunAsync(client, options.AccountId);
+    return;
+}
 
 var token = Environment.GetEnvironmentVariable("CLOUDFLARE_API_TOKEN");
 var accountId = Environment.GetEnvironmentVariable("CLOUDFLARE_ACCOUNT_ID");
