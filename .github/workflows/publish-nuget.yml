@@ -27,7 +27,7 @@ jobs:
         run: dotnet build Cloudflare.Kit.sln -c Release
       - name: Test
         run: dotnet test tests/Cloudflare.Kit.Tests -c Release --no-build
-      - name: Pack all dependencies and Kit
+      - name: Pack Kit with upstream assemblies
         shell: pwsh
         run: ./tools/Build-Packages.ps1 -OutputDirectory '${{ github.workspace }}/artifacts/packages'
       - name: Save packages
@@ -35,6 +35,9 @@ jobs:
         with:
           name: nuget-packages
           path: artifacts/packages/*nupkg
+      - name: Verify single package and Console consumer
+        shell: pwsh
+        run: ./tools/Verify-Package.ps1 -PackageDirectory '${{ github.workspace }}/artifacts/packages'
       - name: NuGet login
         uses: NuGet/login@v1
         id: login
@@ -45,7 +48,7 @@ jobs:
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
         run: |
-          $packageNames = @('Cloudflare.Kit.Api.*.nupkg', 'Cloudflare.Kit.R2.*.nupkg', 'Cloudflare.Kit.0.*.nupkg')
+          $packageNames = @('Cloudflare.Kit.0.*.nupkg')
           foreach ($packageName in $packageNames)
           {
               $package = Get-Item "artifacts/packages/$packageName"

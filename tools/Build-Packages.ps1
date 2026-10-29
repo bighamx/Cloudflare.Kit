@@ -8,18 +8,10 @@ if (!$OutputDirectory)
     $OutputDirectory = Join-Path $taskRoot 'packages'
 }
 
-$taskProjects = @(
-    'upstream/Cloudflare.NET/src/Cloudflare.NET/Cloudflare.NET.csproj'
-    'upstream/Cloudflare.NET/src/Cloudflare.NET.R2/Cloudflare.NET.R2.csproj'
-    'src/Cloudflare.Kit/Cloudflare.Kit.csproj'
-)
+$taskProject = Join-Path $taskRoot 'src/Cloudflare.Kit/Cloudflare.Kit.csproj'
+& dotnet pack $taskProject -c Release -o $OutputDirectory
 
-foreach ($taskProject in $taskProjects)
+if ($LASTEXITCODE)
 {
-    & dotnet pack (Join-Path $taskRoot $taskProject) -c Release -o $OutputDirectory
-
-    if ($LASTEXITCODE)
-    {
-        throw "Package build failed: $taskProject"
-    }
+    throw "Package build failed: $taskProject"
 }
