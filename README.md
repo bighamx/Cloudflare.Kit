@@ -6,33 +6,39 @@
 
 | 入口 | 功能 | 实现 |
 |---|---|---|
-| `Dns` | DNS 记录、批量操作、导入导出，保留 Worker 归属和只读元数据 | Cloudflare.NET.Api（DNS 元数据补丁） |
+| `Dns` | DNS 记录、批量操作、导入导出，保留 Worker 归属和只读元数据 | Cloudflare.Kit.Api（上游源码 Fork） |
 | `Kv` | 命名空间、文本/二进制、metadata、过期时间、批量操作 | 同上 |
 | `D1` | 数据库管理、参数化 SQL、导出导入 | 同上 |
 | `Accounts` | R2 桶、CORS、生命周期、自定义域等账户接口 | 同上 |
-| `R2` | 对象上传下载、分片上传、预签名 URL | Cloudflare.NET.R2 2.5.0 |
+| `R2` | 对象上传下载、分片上传、预签名 URL | Cloudflare.Kit.R2（上游源码 Fork） |
 | `Tunnels` | 列表/自动分页、详情、创建远程隧道、重命名、删除、token、ingress、连接查询/移除 | Kit |
 | `WorkerScripts` | ES Module Worker 的 multipart 上传部署、多模块/资源、绑定元数据、删除 | Kit |
-| `Api` | 完整上游客户端，访问 Zones、WAF、Turnstile 等接口 | Cloudflare.NET.Api |
+| `Api` | 完整上游客户端，访问 Zones、WAF、Turnstile 等接口 | Cloudflare.Kit.Api |
 
 没有引入 Cloudflare.ZeroTrust / Cloudflare.Net Kiota 包，避免与 Alos 的程序集名称冲突。Workers 并非全套接口，Pages、Queues 和 Tunnel 私网路由/subnet 尚未封装。
 
 ## 引用
 
-源码仓库：[bighamx/Cloudflare.Kit](https://github.com/bighamx/Cloudflare.Kit)。当前尚未发布到 NuGet.org，可克隆源码后使用项目引用：
+通过 NuGet 安装（API 和 R2 依赖会自动还原）：
 
 ```powershell
-git clone https://github.com/bighamx/Cloudflare.Kit.git
+dotnet add package Cloudflare.Kit --version 0.1.2
+```
+
+源码仓库：[bighamx/Cloudflare.Kit](https://github.com/bighamx/Cloudflare.Kit)。也可克隆源码后使用项目引用：
+
+```powershell
+git clone --recurse-submodules https://github.com/bighamx/Cloudflare.Kit.git
 dotnet add YourApp.csproj reference ./Cloudflare.Kit/src/Cloudflare.Kit/Cloudflare.Kit.csproj
 ```
 
-或者执行 `dotnet pack src/Cloudflare.Kit -c Release -o artifacts`，将生成的包作为本地 NuGet 源使用。包依赖会传递到调用方。
+已有克隆先执行 `git submodule update --init --recursive`。执行 `./tools/Build-Packages.ps1` 可将 Kit、API 和 R2 三个包统一生成到 `packages/`，用于本地包源或发布。仅打包 Kit 不会将依赖 DLL 自动嵌入包内。
 
 仓库包含 SDK 源码、单元测试和可编译示例；构建要求 .NET 8 或更新的稳定版 SDK。
 
-### DNS 元数据补丁（Kit 0.1.1）
+### 上游源码与 DNS 元数据（Kit 0.1.2）
 
-现有 `client.Dns` 的调用方式不变。此版本使用 `Cloudflare.NET.Api 3.7.0.1` 本地补丁包，基于上游 3.7.0 的固定提交 `dd11a749db394f2b8d4517bd0ffb56f4ba1c0244`，仅扩展 DNS 返回模型：
+现有 `client.Dns` 的调用方式不变。API 和 R2 均通过项目引用从 `upstream/Cloudflare.NET` 编译，该目录是 [bighamx/Cloudflare.NET](https://github.com/bighamx/Cloudflare.NET/tree/kit) 的 Git submodule，固定具体提交。Fork 基于上游提交 `dd11a749db394f2b8d4517bd0ffb56f4ba1c0244`（API 3.7.0、R2 2.5.0），保留原许可证、版权、程序集名称和签名，并扩展 DNS 返回模型：
 
 ```csharp
 var record = await client.Dns.GetDnsRecordAsync(zoneId, recordId);
@@ -42,7 +48,11 @@ var readOnly = record.Meta?.ReadOnly;       // meta.read_only，缺失为 null
 
 列表和自动分页查询同样保留这些字段。`DnsRecord`、`DnsRecordMeta` 的未知字段通过 `AdditionalProperties` 保留，再输出 JSON 时不会丢失；已有构造函数、解构方法及程序集标识保持兼容。`AAAA → 100::` 不是 Worker 归属证明，应读取 `OriginWorkerId`；`ReadOnly` 应独立用于限制编辑、删除，缺失时不推测权限。
 
-`3.7.0.1` 是本项目维护并精确锁定的补丁版本，不是上游官方发布。仓库 `packages/` 提供依赖包，`NuGet.Config` 配置本地源；其他项目使用 Kit 的本地 NuGet 包时，也须把此目录加入包源并分发该依赖包。补丁位于 `patches/cloudflare-net-api-dns-metadata.patch`，可执行 `./tools/Build-DnsPatchedDependency.ps1` 从固定上游源码重建。上游 Apache-2.0 许可及版权声明保留在依赖包内。
+发布使用独立包名 `Cloudflare.Kit.Api 3.7.0.2` 和 `Cloudflare.Kit.R2 2.5.0.1`，它们是本项目维护的 Fork，非上游官方发布。不要同时引用官方 `Cloudflare.NET.Api` / `Cloudflare.NET.R2` 包，避免相同程序集的重复引用。旧补丁文件、二进制依赖和补丁构建脚本已移除。
+
+修改上游功能时直接编辑 submodule 中的源码，在其 `kit` 分支提交、推送，然后在 Kit 提交新的 submodule 指针。更新上游时先在 Fork 合并选定的上游提交，检查差异、兼容性和包版本，运行 Kit 构建、测试及打包，再更新指针；不自动跟随上游 HEAD。详细修改记录见 [FORK.md](upstream/Cloudflare.NET/FORK.md)。
+
+NuGet 发布工作流位于 `.github/workflows/publish-nuget.yml`，推送 `v*` 标签或手动触发后，递归检出源码、构建、测试并依次发布 API、R2、Kit。使用 NuGet 账户 `chuckiep` 的 Trusted Publishing，绑定仓库 `bighamx/Cloudflare.Kit`、工作流 `publish-nuget.yml` 和环境 `production`，通过 OIDC 获取短期凭据；不在仓库保存 API Key。
 
 ## 创建 Token 与其他凭据
 

@@ -1,0 +1,57 @@
+name: Publish NuGet
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build
+        run: dotnet build Cloudflare.Kit.sln -c Release
+      - name: Test
+        run: dotnet test tests/Cloudflare.Kit.Tests -c Release --no-build
+      - name: Pack all dependencies and Kit
+        shell: pwsh
+        run: ./tools/Build-Packages.ps1 -OutputDirectory '${{ github.workspace }}/artifacts/packages'
+      - name: Save packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/packages/*nupkg
+      - name: NuGet login
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: chuckiep
+      - name: Publish
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          $packageNames = @('Cloudflare.Kit.Api.*.nupkg', 'Cloudflare.Kit.R2.*.nupkg', 'Cloudflare.Kit.0.*.nupkg')
+          foreach ($packageName in $packageNames)
+          {
+              $package = Get-Item "artifacts/packages/$packageName"
+              dotnet nuget push $package.FullName --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+              if ($LASTEXITCODE)
+              {
+                  throw "NuGet push failed: $packageName"
+              }
+          }

@@ -1,0 +1,4 @@
+[submodule "upstream/Cloudflare.NET"]
+	path = upstream/Cloudflare.NET
+	url = https://github.com/bighamx/Cloudflare.NET.git
+	branch = kit
