@@ -3,6 +3,7 @@
 .vs/
 *.user
 *.nupkg
+!packages/Cloudflare.NET.Api.3.7.0.1.nupkg
 *.snupkg
 artifacts/
 appsettings.local.json

@@ -6,7 +6,7 @@
 
 | 入口 | 功能 | 实现 |
 |---|---|---|
-| `Dns` | DNS 记录、批量操作、导入导出 | Cloudflare.NET.Api 3.7.0 |
+| `Dns` | DNS 记录、批量操作、导入导出，保留 Worker 归属和只读元数据 | Cloudflare.NET.Api（DNS 元数据补丁） |
 | `Kv` | 命名空间、文本/二进制、metadata、过期时间、批量操作 | 同上 |
 | `D1` | 数据库管理、参数化 SQL、导出导入 | 同上 |
 | `Accounts` | R2 桶、CORS、生命周期、自定义域等账户接口 | 同上 |
@@ -29,6 +29,20 @@ dotnet add YourApp.csproj reference ./Cloudflare.Kit/src/Cloudflare.Kit/Cloudfla
 或者执行 `dotnet pack src/Cloudflare.Kit -c Release -o artifacts`，将生成的包作为本地 NuGet 源使用。包依赖会传递到调用方。
 
 仓库包含 SDK 源码、单元测试和可编译示例；构建要求 .NET 8 或更新的稳定版 SDK。
+
+### DNS 元数据补丁（Kit 0.1.1）
+
+现有 `client.Dns` 的调用方式不变。此版本使用 `Cloudflare.NET.Api 3.7.0.1` 本地补丁包，基于上游 3.7.0 的固定提交 `dd11a749db394f2b8d4517bd0ffb56f4ba1c0244`，仅扩展 DNS 返回模型：
+
+```csharp
+var record = await client.Dns.GetDnsRecordAsync(zoneId, recordId);
+var workerId = record.Meta?.OriginWorkerId; // meta.origin_worker_id
+var readOnly = record.Meta?.ReadOnly;       // meta.read_only，缺失为 null
+```
+
+列表和自动分页查询同样保留这些字段。`DnsRecord`、`DnsRecordMeta` 的未知字段通过 `AdditionalProperties` 保留，再输出 JSON 时不会丢失；已有构造函数、解构方法及程序集标识保持兼容。`AAAA → 100::` 不是 Worker 归属证明，应读取 `OriginWorkerId`；`ReadOnly` 应独立用于限制编辑、删除，缺失时不推测权限。
+
+`3.7.0.1` 是本项目维护并精确锁定的补丁版本，不是上游官方发布。仓库 `packages/` 提供依赖包，`NuGet.Config` 配置本地源；其他项目使用 Kit 的本地 NuGet 包时，也须把此目录加入包源并分发该依赖包。补丁位于 `patches/cloudflare-net-api-dns-metadata.patch`，可执行 `./tools/Build-DnsPatchedDependency.ps1` 从固定上游源码重建。上游 Apache-2.0 许可及版权声明保留在依赖包内。
 
 ## 创建 Token 与其他凭据
 
