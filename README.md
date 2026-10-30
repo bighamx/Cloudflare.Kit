@@ -56,6 +56,8 @@ var readOnly = record.Meta?.ReadOnly;       // meta.read_only，缺失为 null
 
 NuGet 发布工作流位于 `.github/workflows/publish-nuget.yml`，推送 `v*` 标签或手动触发后，递归检出源码、构建、测试、检查单包内容及独立 Console 安装，再发布 Kit。上游依赖升级时同步检查 Kit 项目的第三方 PackageReference。使用 NuGet 账户 `chuckiep` 的 Trusted Publishing，绑定仓库 `bighamx/Cloudflare.Kit`、工作流 `publish-nuget.yml` 和环境 `production`，通过 OIDC 获取短期凭据；不在仓库保存 API Key。
 
+同一个主包同时发布到 NuGet.org 和 GitHub Packages，后者通过包内 `RepositoryUrl` 关联本仓库，可在仓库右侧 Packages 查看。GitHub 发布使用工作流自带的 `GITHUB_TOKEN` 和 `packages: write` 权限，无需额外保存 Token。一般使用者直接从 NuGet.org 安装即可；GitHub NuGet 源为 `https://nuget.pkg.github.com/bighamx/index.json`，从该源安装需要具有 `read:packages` 权限的凭据，即使包为公开可见也需要认证。
+
 ## 创建 Token 与其他凭据
 
 先确定需要哪种凭据；资源 ID 是定位标识，不是密钥。

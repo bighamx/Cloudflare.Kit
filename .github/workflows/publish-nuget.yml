@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,7 +44,7 @@ jobs:
         id: login
         with:
           user: chuckiep
-      - name: Publish
+      - name: Publish to NuGet.org
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
@@ -57,4 +58,15 @@ jobs:
               {
                   throw "NuGet push failed: $packageName"
               }
+          }
+      - name: Publish to GitHub Packages
+        shell: pwsh
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $package = Get-Item 'artifacts/packages/Cloudflare.Kit.0.*.nupkg'
+          dotnet nuget push $package.FullName --api-key $env:GITHUB_PACKAGES_TOKEN --source 'https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json' --skip-duplicate
+          if ($LASTEXITCODE)
+          {
+              throw 'GitHub Packages push failed.'
           }
