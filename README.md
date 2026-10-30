@@ -1,5 +1,7 @@
 # Cloudflare.Kit
 
+[![NuGet](https://img.shields.io/nuget/v/Cloudflare.Kit.svg)](https://www.nuget.org/packages/Cloudflare.Kit/)
+
 用于 .NET 8+ 的 Cloudflare SDK 组合包。复用社区维护的 Cloudflare.NET，补充 Tunnel 管理和 Worker 模块脚本上传，提供统一调用入口。本项目不是 Cloudflare 官方 SDK。
 
 ## 覆盖范围
